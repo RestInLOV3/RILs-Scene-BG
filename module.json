@@ -23,7 +23,7 @@
     "scripts/module.js"
   ],
   "styles": [
-  "styles.css"
+    "styles/styles.css"
   ],
   "languages": [
     {
