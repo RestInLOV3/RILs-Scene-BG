@@ -1,0 +1,14 @@
+/* SceneConfig 배경 이미지 필드 세로 정렬 */
+.rils-scene-bg-group {
+  display: block !important;
+}
+
+.rils-scene-bg-group .form-fields {
+  display: flex;
+  gap: 0.5em; /* input과 버튼 간 간격 */
+}
+
+.rils-scene-bg-group .notes {
+  margin-top: 0.25em;
+  display: block;
+}
