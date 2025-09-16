@@ -1,4 +1,4 @@
-// --- SceneConfig 및 Canvas 배경 이미지 모듈 (v13 호환) ---
+// --- SceneConfig UI 확장 --- //
 Hooks.on("renderSceneConfig", async (app, html) => {
   if (!app.isEditable) return;
   const scene = app.document;
@@ -10,7 +10,7 @@ Hooks.on("renderSceneConfig", async (app, html) => {
   const $form = $(html);
 
   if ($form.find(".rils-scene-bg-group").length === 0) {
-    const $injection = $(`
+    const $injection = $(` 
       <div class="form-group rils-scene-bg-group">
         <label>배경 이미지</label>
         <div class="form-fields">
@@ -53,33 +53,27 @@ Hooks.on("renderSceneConfig", async (app, html) => {
   });
 
   app.setFlagOnSubmit = async () => {
-    if (scene.setFlag) {
-      await scene.setFlag(
-        "rils-scene-bg",
-        "backgroundImage",
-        $bgGroup
-          .find('input[name="flags.rils-scene-bg.backgroundImage"]')
-          .val() || null
-      );
-      await scene.setFlag(
-        "rils-scene-bg",
-        "backgroundScale",
-        parseFloat(
-          $bgGroup
-            .find('input[name="flags.rils-scene-bg.backgroundScale"]')
-            .val()
-        ) || 3
-      );
-      await scene.setFlag(
-        "rils-scene-bg",
-        "backgroundBlur",
-        parseFloat(
-          $bgGroup
-            .find('input[name="flags.rils-scene-bg.backgroundBlur"]')
-            .val()
-        ) || 8
-      );
-    }
+    await scene.setFlag(
+      "rils-scene-bg",
+      "backgroundImage",
+      $bgGroup
+        .find('input[name="flags.rils-scene-bg.backgroundImage"]')
+        .val() || null
+    );
+    await scene.setFlag(
+      "rils-scene-bg",
+      "backgroundScale",
+      parseFloat(
+        $bgGroup.find('input[name="flags.rils-scene-bg.backgroundScale"]').val()
+      ) || 3
+    );
+    await scene.setFlag(
+      "rils-scene-bg",
+      "backgroundBlur",
+      parseFloat(
+        $bgGroup.find('input[name="flags.rils-scene-bg.backgroundBlur"]').val()
+      ) || 8
+    );
   };
 
   $form.closest("form").on("submit", async () => {
@@ -87,15 +81,49 @@ Hooks.on("renderSceneConfig", async (app, html) => {
   });
 });
 
-// --- 전체 배경 추가 및 조정 ---
-Hooks.on("canvasReady", (canvas) => addOrUpdateBackground(canvas));
-Hooks.on("canvasResized", (canvas) => addOrUpdateBackground(canvas));
-Hooks.on("renderScene", (scene, html, data) => {
+// --- 전체 배경 추가 및 조정 --- //
+let bgTweenTarget = { x: 0, y: 0 };
+let bgSprite = null;
+let bgTickerActive = false;
+
+// canvas가 준비되면 한 번 호출
+Hooks.on("canvasReady", (canvas) => {
+  // 씬 로딩이 끝났는지 한 번 더 체크
+  waitForSceneFlags(canvas.scene).then(() => {
+    console.log("씬 로딩 끝남");
+    addOrUpdateBackground(canvas);
+  });
+});
+
+/** 씬의 플래그가 로드될 때까지 대기 */
+function waitForSceneFlags(scene, retries = 10) {
+  return new Promise((resolve) => {
+    const check = () => {
+      if (scene.getFlag("rils-scene-bg", "backgroundImage") !== undefined) {
+        resolve();
+      } else if (retries > 0) {
+        setTimeout(() => check(--retries), 100); // 100ms 지연 후 다시 확인
+      } else {
+        resolve(); // 더 이상 기다리지 않고 그냥 실행
+      }
+    };
+    check();
+  });
+}
+
+// 창 크기 변경 시 재계산
+Hooks.on("canvasResized", (canvas) => {
   addOrUpdateBackground(canvas);
 });
 
 function addOrUpdateBackground(canvas) {
+  console.log("Adding or updating background 함수 호출됨");
   const scene = canvas.scene;
+  if (!scene) {
+    console.log("No scene found");
+    return;
+  }
+
   const bgImage = scene.getFlag("rils-scene-bg", "backgroundImage");
   if (!bgImage) return;
 
@@ -103,49 +131,76 @@ function addOrUpdateBackground(canvas) {
     scene.getFlag("rils-scene-bg", "backgroundScale") || 3;
   const blurAmount = scene.getFlag("rils-scene-bg", "backgroundBlur") || 8;
 
-  // 이전 배경 제거
+  // 기존 배경 제거
   const oldBg = canvas.stage.getChildByName("rilsSceneBg");
-  if (oldBg) canvas.stage.removeChild(oldBg);
+  if (oldBg) {
+    canvas.stage.removeChild(oldBg);
+    console.log("Old background removed");
+  }
 
   const bgContainer = new PIXI.Container();
   bgContainer.name = "rilsSceneBg";
   bgContainer.zIndex = -1000;
   bgContainer.interactive = false;
 
-  const sprite = PIXI.Sprite.from(bgImage);
+  bgSprite = PIXI.Sprite.from(bgImage);
 
-  // 화면과 이미지 비율 계산
-  const imgRatio = sprite.texture.width / sprite.texture.height;
-  const screenRatio = canvas.app.screen.width / canvas.app.screen.height;
+  const setupSprite = () => {
+    const imgRatio = bgSprite.texture.width / bgSprite.texture.height;
+    const screenRatio = canvas.app.screen.width / canvas.app.screen.height;
 
-  let scaleFactor;
-  if (screenRatio > imgRatio) {
-    scaleFactor = canvas.app.screen.width / sprite.texture.width;
+    let scaleFactor;
+    if (screenRatio > imgRatio) {
+      scaleFactor = canvas.app.screen.width / bgSprite.texture.width;
+    } else {
+      scaleFactor = canvas.app.screen.height / bgSprite.texture.height;
+    }
+
+    scaleFactor *= scaleMultiplier;
+    bgSprite.scale.set(scaleFactor);
+
+    bgSprite.anchor.set(0.5);
+    bgSprite.x = canvas.scene.width / 2;
+    bgSprite.y = canvas.scene.height / 2;
+    bgTweenTarget.x = 0;
+    bgTweenTarget.y = 0;
+
+    const blurFilter = new PIXI.filters.BlurFilter();
+    blurFilter.blur = blurAmount;
+    bgSprite.filters = [blurFilter];
+
+    bgContainer.addChild(bgSprite);
+    canvas.stage.addChildAt(bgContainer, 0);
+
+    bgTickerActive = true; // 여기서부터 ticker 활성화
+  };
+
+  // 🔑 텍스처가 이미 로드된 상태라면 바로 실행
+  if (bgSprite.texture.baseTexture.valid) {
+    setupSprite();
   } else {
-    scaleFactor = canvas.app.screen.height / sprite.texture.height;
+    bgSprite.texture.baseTexture.once("loaded", setupSprite);
   }
-
-  // 플래그에서 가져온 배율 적용
-  scaleFactor *= scaleMultiplier;
-  sprite.scale.set(scaleFactor);
-
-  // 씬 좌표 기준 중앙 배치
-  sprite.anchor.set(0.5);
-  sprite.x = canvas.scene.width / 2;
-  sprite.y = canvas.scene.height / 2;
-  sprite.alpha = 1;
-
-  // 블러 필터 적용
-  const blurFilter = new PIXI.filters.BlurFilter();
-  blurFilter.blur = blurAmount;
-  sprite.filters = [blurFilter];
-
-  bgContainer.addChild(sprite);
-
-  // canvas.stage가 아닌 canvas.stage 안에 추가
-  canvas.stage.addChildAt(bgContainer, 0);
-
-  console.log("씬 기준 배경 추가 완료:", bgContainer);
-  console.log("Sprite scaled width x height:", sprite.width, sprite.height);
-  console.log("배율:", scaleMultiplier, "블러:", blurAmount);
 }
+
+// --- 한 번만 등록하는 Ticker --- //
+let warnedOnce = false;
+PIXI.Ticker.shared.add(() => {
+  if (!bgSprite || !bgTickerActive) {
+    if (!warnedOnce) {
+      console.log("배경 스프라이트가 아직 준비되지 않았음 (한 번만 출력)");
+      warnedOnce = true;
+    }
+    return;
+  }
+  warnedOnce = false;
+
+  const dx = (canvas.stage.pivot.x * -1 - bgTweenTarget.x) * 0.05;
+  const dy = (canvas.stage.pivot.y * -1 - bgTweenTarget.y) * 0.05;
+
+  if (Math.abs(dx) > 0.1) bgTweenTarget.x += dx;
+  if (Math.abs(dy) > 0.1) bgTweenTarget.y += dy;
+
+  bgSprite.x = canvas.scene.width / 2 + bgTweenTarget.x * 0.2;
+  bgSprite.y = canvas.scene.height / 2 + bgTweenTarget.y * 0.2;
+});
